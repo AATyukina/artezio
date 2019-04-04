@@ -1,4 +1,4 @@
-def pangramm(line = ''):
+def pangramm(line= ''):
 
     import string
     abc = string.ascii_lowercase
