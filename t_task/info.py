@@ -10,7 +10,7 @@ class FlightInfo:
            'departure-date=%s&arrival-date=%s&adults-children=1'
 
     def __init__(self):
-        self.airp_desc, self.airp_codes = self.getAirportsDesc()
+        self.airp_desc, self.airp_codes = self.get_airports_desc()
         self._dep_city = None
         self._arr_city = None
         self._dep_date = None
@@ -79,7 +79,7 @@ class FlightInfo:
             raise ValueError("Incorrect date")
         self._arr_date = value
 
-    def getFlightInfo(self):
+    def get_flight_info(self):
         flight_info = self.get_inner_href()
         if not self.check_available(flight_info):
             return "No flights available"
@@ -199,7 +199,7 @@ class FlightInfo:
         pd.options.display.max_columns = 10
         return df.sort_values('price').reset_index(drop=True)
 
-    def getAirportsDesc(self):
+    def get_airports_desc(self):
         first_html = requests.get('http://www.flybulgarien.dk/en/timetable')
         htmltree = html.document_fromstring(first_html.content)
         airports_with_desc = htmltree.xpath("//div[@class='text-content']/p/text()")[2].replace("\n- ", "").split(", ")
@@ -239,7 +239,7 @@ if __name__ == "__main__":
             except ValueError as e:
                 print(str(e))
 
-        print(fi.getFlightInfo())
+        print(fi.get_flight_info())
 
         yes_or_no = input("Continue? y/n    ")
         if yes_or_no == "n":
