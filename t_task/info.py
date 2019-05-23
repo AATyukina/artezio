@@ -1,246 +1,195 @@
-import requests
+from requests import get, exceptions
 from lxml import html
-import datetime
+from datetime import datetime, timedelta
 import pandas as pd
-import collections
+from collections import OrderedDict
 
 
 class FlightInfo:
-    href = 'http://www.flybulgarien.dk/en/search?departure-city=%s&arrival-city=%s&' \
-           'departure-date=%s&arrival-date=%s&adults-children=1'
-
     def __init__(self):
-        self.airp_desc, self.airp_codes = self.get_airports_desc()
-        self._dep_city = None
-        self._arr_city = None
-        self._dep_date = None
-        self._arr_date = None
+        self.dep_city = None
+        self.arr_city = None
+        self.dep_date = None
+        self.arr_date = None
 
-    @property
-    def dep_city(self):
-        return self._dep_city
-
-    @property
-    def arr_city(self):
-        return self._arr_city
-
-    @property
-    def dep_date(self):
-        return self._dep_date
-
-    @property
-    def arr_date(self):
-        return self._arr_date
-
-    @dep_city.setter
-    def dep_city(self, value):
-        if not value.isalpha():
-            raise ValueError("Airport code must consist of letters")
-        value = value.upper()
-        if value not in self.airp_codes:
-            raise ValueError("Airport code must be in list of airport codes")
-        self._dep_city = value
-
-    @arr_city.setter
-    def arr_city(self, value):
-        if not value.isalpha():
-            raise ValueError("Airport code must consist of letters")
-        value = value.upper()
-        if value == self._dep_city:
-            raise ValueError("Arrival city airport code must be different from departure city airport code")
-        if value not in self.airp_codes:
-            raise ValueError("Airport code must be in list of airport codes")
-        self._arr_city = value
-
-    @dep_date.setter
-    def dep_date(self, value):
-        try:
-            check = datetime.datetime.strptime(value, '%d.%m.%Y')
-        except:
-            raise ValueError("Set departure date as dd.mm.yyyy")
-        start = datetime.datetime.today()
-        end = start + datetime.timedelta(days=365)
-        if not start <= check <= end:
-            raise ValueError("Incorrect date")
-        self._dep_date = value
-
-    @arr_date.setter
-    def arr_date(self, value):
-        if value == "":
-            self._arr_date = value
-            return
-        try:
-            check = datetime.datetime.strptime(value, '%d.%m.%Y')
-        except:
-            raise ValueError("Set departure date as dd.mm.yyyy")
-        start = datetime.datetime.strptime(self._dep_date, '%d.%m.%Y') + datetime.timedelta(days=1)
-        end = datetime.datetime.today() + datetime.timedelta(days=365)
-        if not start <= check <= end:
-            raise ValueError("Incorrect date")
-        self._arr_date = value
+    def set_info(self, dep_city_checked, arr_city_checked, dep_date_checked, arr_date_checked):
+        self.dep_city = dep_city_checked
+        self.arr_city = arr_city_checked
+        self.dep_date = dep_date_checked
+        self.arr_date = arr_date_checked
 
     def get_flight_info(self):
-        flight_info = self.get_inner_href()
-        if not self.check_available(flight_info):
-            return "No flights available"
-        if self.arr_date == "":
-            return self._get_flight_info_not_return(flight_info)
-        else:
-            return self._get_flight_info_return(flight_info)
-
-    def check_available(self, flight_info):
+        # получили данные по перелетам
+        params = {
+            'departure-city': self.dep_city,
+            'arrival-city': self.arr_city,
+            'departure-date': self.dep_date,
+            'arrival-date': self.arr_date,
+            'adults-children': '1'
+        }
         try:
-            for check in flight_info:
-                for el in check.xpath(".//td/text()"):
-                    if 'No available flights found.' in el:
-                        return False
-        except:
-            pass
-        return True
+            main_page_html = get('http://www.flybulgarien.dk/en/search', params=params)
+            html_tree = html.document_fromstring(main_page_html.content)
 
-    def get_inner_href(self):
-        first_html = requests.get(self.href % (self.dep_city, self.arr_city, self.dep_date, self.arr_date))
-        htmltree = html.document_fromstring(first_html.content)
-        flight_page = requests.get(htmltree.xpath("//iframe[@name='flybulgarienintraweb']/@src")[0])
-        htmltree = html.document_fromstring(flight_page.content)
-        flight_info = htmltree.xpath("//table[@id='flywiz_tblQuotes']/tr")
-        return flight_info
+            inner_page_html = get(html_tree.xpath("//iframe[@name='flybulgarienintraweb']/@src")[0])
+            html_tree = html.document_fromstring(inner_page_html.content)
+        except exceptions.ConnectionError:
+            return 'Попытка установить соединение была безуспешной'
 
-    def _get_flight_info_not_return(self, flight_info):
-        not_return_flights = []
-        for index in range(2, len(flight_info) - 1):
-            if index % 2 == 0:
-                date = flight_info[index].xpath(".//td/text()")[0]
-                departure = flight_info[index].xpath(".//td/text()")[1]
-                arrival = flight_info[index].xpath(".//td/text()")[2]
-                flight_from = flight_info[index].xpath(".//td/text()")[3]
-                flight_to = flight_info[index].xpath(".//td/text()")[4]
-                duration = datetime.datetime.strptime(arrival, '%H:%M') - datetime.datetime.strptime(departure, '%H:%M')
+        # выделяем данные по перелетам
+        flight_table = html_tree.xpath("//table[@id='flywiz_tblQuotes']")[0]
+        dep_flight_info_tags = flight_table.xpath("./tr[contains(@id,'flywiz_rinf')]")
+        dep_flight_price_tags = flight_table.xpath("./tr[contains(@id,'flywiz_rprc')]")
+        arr_flight_info_tags = flight_table.xpath("./tr[contains(@id,'flywiz_irinf')]")
+        arr_flight_price_tags = flight_table.xpath("./tr[contains(@id,'flywiz_irprc')]")
+
+        if not dep_flight_info_tags and not arr_flight_info_tags or not dep_flight_info_tags:
+            return 'No flights available'
+
+        dep_flight_info = self.combine_info(dep_flight_info_tags, dep_flight_price_tags,
+                                            self.dep_date, dep_date='dep date',
+                                            dep_city='dep city', arr_city='arr city',
+                                            price='price to', dur='duration(to)')
+        if not dep_flight_info:
+            return 'No flights available'
+
+        if self.arr_date:
+            arr_flight_info = self.combine_info(arr_flight_info_tags, arr_flight_price_tags,
+                                                self.arr_date, dep_date='date back',
+                                                dep_city='dep city back', arr_city='arr city back',
+                                                price='price back', dur='duration(back)')
+            if arr_flight_info:
+                total_flight_combinations = []
+                for go in dep_flight_info:
+                    for back in arr_flight_info:
+                        total_flight_combinations.append(OrderedDict(list(go.items()) + list(back.items())))
+
+                df = pd.DataFrame(total_flight_combinations)
+                df['price'] = df['price to'] + df['price back']
+                s = pd.Series(df['cur'])
+                df = df.drop(['price to', 'price back', 'dep city back', 'arr city back', 'cur'], axis=1)
+                df['cur'] = s
+                return df.sort_values('price').reset_index(drop=True)
             else:
-                price = flight_info[index].xpath(".//td/text()")[0].replace('Price:  ', '').split()
-                d = collections.OrderedDict()
-                d['dep date'] = date
-                d['dep city'] = flight_from
-                d['arr city'] = flight_to
-                d['duration(h)'] = duration
-                d['price'] = float(price[0])
-                d['cur'] = price[1]
-                not_return_flights.append(d)
+                print('No flights found back')
+        return pd.DataFrame(dep_flight_info).sort_values('price to').reset_index(drop=True)
 
-        df = pd.DataFrame(not_return_flights)
-        pd.options.display.max_columns = 10
-        return df.sort_values('price').reset_index(drop=True)
+    def combine_info(self, flight_info_tags,
+                     flight_price_tags, needed_date,
+                     dep_date='', dep_city='',
+                     arr_city='', dur='duration(h)',
+                     price='', cur='cur'):
+        combined_flight_info = []
 
-    def _get_flight_info_return(self, flight_info):
-        return_flights_go = []
-        return_flights_back = []
-        is_info = True
+        for index in range(len(flight_info_tags)):
+            tmp_date = datetime.strptime(flight_info_tags[index].xpath(".//td/text()")[0], '%a, %d %b %y')
+            date = tmp_date.strftime('%d.%m.%Y')
+            if date == needed_date:
+                departure = flight_info_tags[index].xpath(".//td/text()")[1]
+                arrival = flight_info_tags[index].xpath(".//td/text()")[2]
+                flight_from = flight_info_tags[index].xpath(".//td/text()")[3]
+                flight_to = flight_info_tags[index].xpath(".//td/text()")[4]
+                duration = datetime.strptime(arrival, '%H:%M') - datetime.strptime(departure, '%H:%M')
+                price_cur = flight_price_tags[index].xpath(".//td/text()")[0].replace('Price:  ', '').split()
 
-        for index in range(2, len(flight_info)):
-            try:
-                if is_info:
-                    date = flight_info[index].xpath(".//td/text()")[0]
-                    departure = flight_info[index].xpath(".//td/text()")[1]
-                    arrival = flight_info[index].xpath(".//td/text()")[2]
-                    flight_from = flight_info[index].xpath(".//td/text()")[3]
-                    flight_to = flight_info[index].xpath(".//td/text()")[4]
-                    duration = datetime.datetime.strptime(arrival, '%H:%M') - datetime.datetime.strptime(departure,
-                                                                                                         '%H:%M')
-                    is_info = False
-                else:
-                    price = flight_info[index].xpath(".//td/text()")[0].replace('Price:  ', '').split()
-                    d = collections.OrderedDict()
-                    d['dep date'] = date
-                    d['dep city'] = flight_from
-                    d['arr city'] = flight_to
-                    d['duration(h) go'] = duration
-                    d['price_to'] = float(price[0])
+                d = OrderedDict()
+                d[dep_date] = date
+                d[dep_city] = flight_from
+                d[arr_city] = flight_to
+                d[dur] = duration
+                d[price] = float(price_cur[0])
+                d[cur] = price_cur[1]
+                combined_flight_info.append(d)
+        return combined_flight_info
 
-                    return_flights_go.append(d)
-                    is_info = True
-                    start_index = index
-            except:
-                is_info = True
-                start_index = index
-                break
 
-        for index in range(start_index, len(flight_info)):
-            try:
-                if is_info:
-                    date = flight_info[index].xpath(".//td/text()")[0]
-                    departure = flight_info[index].xpath(".//td/text()")[1]
-                    arrival = flight_info[index].xpath(".//td/text()")[2]
-                    duration = datetime.datetime.strptime(arrival, '%H:%M') - datetime.datetime.strptime(departure,
-                                                                                                         '%H:%M')
-                    is_info = False
-                else:
-                    price = flight_info[index].xpath(".//td/text()")[0].replace('Price:  ', '').split()
-                    d = collections.OrderedDict()
-                    d['arr date'] = date
-                    d['duration(h) back'] = duration
-                    d['price_back'] = float(price[0])
-                    cur = price[1]
-                    is_info = True
-                    return_flights_back.append(d)
-            except:
-                pass
+def enter_check_data():
+    airports_with_desc, airports_codes = get_airports_desc()
+    for x in airports_with_desc:
+        print(x)
+    dep_city = enter_data(message='Departure city code:    ',
+                          is_correct_function=check_dep_city,
+                          air_codes=airports_codes)
+    arr_city = enter_data(message='Arrival city code:    ',
+                          is_correct_function=check_arr_city,
+                          air_codes=airports_codes,
+                          dep_city=dep_city)
+    dep_date = enter_data(message='Departure date:    ',
+                          is_correct_function=check_dep_date)
+    arr_date = enter_data(message='Arrival date(optional):    ',
+                          is_correct_function=check_arr_date,
+                          dep_date=dep_date)
+    return dep_city, arr_city, dep_date, arr_date
 
-        #собираются комбинации различных перелетов
-        total_flight_combinations = []
-        for go in return_flights_go:
-            for back in return_flights_back:
-                total_flight_combinations.append(collections.OrderedDict(list(go.items()) + list(back.items())))
 
-        #формируется цена
-        df = pd.DataFrame(total_flight_combinations)
-        df['price'] = df['price_to'] + df['price_back']
-        df = df.drop(['price_to', 'price_back'], axis=1)
-        df['cur'] = cur
-        pd.options.display.max_columns = 10
-        return df.sort_values('price').reset_index(drop=True)
+def enter_data(message, is_correct_function, **kwargs):
+    while True:
+        var = input(message)
+        if is_correct_function(var, **kwargs):
+            return var.upper()
 
-    def get_airports_desc(self):
-        first_html = requests.get('http://www.flybulgarien.dk/en/timetable')
-        htmltree = html.document_fromstring(first_html.content)
-        airports_with_desc = htmltree.xpath("//div[@class='text-content']/p/text()")[2].replace("\n- ", "").split(", ")
-        airports_codes = [x.split(" > ")[0] for x in airports_with_desc]
-        return airports_with_desc, airports_codes
+
+def check_dep_city(var, **kwargs):
+    if not var.isalpha():
+        print("Airport code must consist of letters")
+        return False
+    var = var.upper()
+    if var not in kwargs["air_codes"]:
+        print("Airport code must be in list of airport codes")
+        return False
+    return True
+
+
+def check_arr_city(var, **kwargs):
+    if check_dep_city(var, **kwargs) and var.upper() != kwargs['dep_city']:
+        return True
+    return False
+
+
+def check_dep_date(var):
+    try:
+        check = datetime.strptime(var, '%d.%m.%Y')
+    except ValueError:
+        print("Set departure date as dd.mm.yyyy")
+        return False
+    start = datetime.today()
+    end = start + timedelta(days=365)
+    if not start <= check <= end:
+        print("Incorrect date")
+        return False
+    return True
+
+
+def check_arr_date(var, **kwargs):
+    if var == "":
+        return True
+    try:
+        check = datetime.strptime(var, '%d.%m.%Y')
+    except ValueError:
+        print("Set departure date as dd.mm.yyyy")
+        return False
+    start = datetime.strptime(kwargs['dep_date'], '%d.%m.%Y') + timedelta(days=1)
+    end = datetime.today() + timedelta(days=365)
+    if not start <= check <= end:
+        print("Incorrect date")
+        return False
+    return True
+
+
+def get_airports_desc():
+    html_tree = html.document_fromstring(get('http://www.flybulgarien.dk/en/timetable').content)
+    airports_with_desc = html_tree.xpath("//div[@class='text-content']/p/text()")[2].replace("\n- ", "").split(", ")
+    airports_codes = [x.split(" > ")[0] for x in airports_with_desc]
+    return airports_with_desc, airports_codes
 
 
 if __name__ == "__main__":
+    fi = FlightInfo()
     while True:
-        fi = FlightInfo()
-        for x in fi.airp_desc: print(x)
-        while True:
-            try:
-                fi.dep_city = input('Departure city code:    ')
-                break
-            except ValueError as e:
-                print(str(e))
-
-        while True:
-            try:
-                fi.arr_city = input('Arrival city code:   ')
-                break
-            except ValueError as e:
-                print(str(e))
-
-        while True:
-            try:
-                fi.dep_date = input('Departure date:    ')
-                break
-            except ValueError as e:
-                print(str(e))
-
-        while True:
-            try:
-                fi.arr_date = input('Arrival date (optional):      ')
-                break
-            except ValueError as e:
-                print(str(e))
-
+        dep_city, arr_city, dep_date, arr_date = enter_check_data()
+        fi.set_info(dep_city, arr_city, dep_date, arr_date)
+        pd.options.display.max_columns = 10
         print(fi.get_flight_info())
-
         yes_or_no = input("Continue? y/n    ")
         if yes_or_no == "n":
             print("Bye")
