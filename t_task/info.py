@@ -3,6 +3,7 @@ from lxml import html
 from datetime import datetime, timedelta
 import pandas as pd
 from collections import OrderedDict
+from itertools import product
 
 
 class FlightInfo:
@@ -60,9 +61,8 @@ class FlightInfo:
                                                 price='price back', dur='duration(back)')
             if arr_flight_info:
                 total_flight_combinations = []
-                for go in dep_flight_info:
-                    for back in arr_flight_info:
-                        total_flight_combinations.append(OrderedDict(list(go.items()) + list(back.items())))
+                for go, back in product(dep_flight_info, arr_flight_info):
+                    total_flight_combinations.append(OrderedDict(list(go.items()) + list(back.items())))
 
                 df = pd.DataFrame(total_flight_combinations)
                 df['price'] = df['price to'] + df['price back']
@@ -108,7 +108,7 @@ def enter_check_data():
     for x in airports_with_desc:
         print(x)
     dep_city = enter_data(message='Departure city code:    ',
-                          is_correct_function=check_dep_city,
+                          is_correct_function=check_city,
                           air_codes=airports_codes)
     arr_city = enter_data(message='Arrival city code:    ',
                           is_correct_function=check_arr_city,
@@ -129,7 +129,7 @@ def enter_data(message, is_correct_function, **kwargs):
             return var.upper()
 
 
-def check_dep_city(var, **kwargs):
+def check_city(var, **kwargs):
     if not var.isalpha():
         print("Airport code must consist of letters")
         return False
@@ -141,35 +141,34 @@ def check_dep_city(var, **kwargs):
 
 
 def check_arr_city(var, **kwargs):
-    if check_dep_city(var, **kwargs) and var.upper() != kwargs['dep_city']:
-        return True
-    return False
+    if not check_city(var, **kwargs):
+        return False
+    if var.upper() == kwargs['dep_city']:
+        print('Departure and arrival cities must be different')
+        return False
+    return True
 
 
 def check_dep_date(var):
-    try:
-        check = datetime.strptime(var, '%d.%m.%Y')
-    except ValueError:
-        print("Set departure date as dd.mm.yyyy")
-        return False
     start = datetime.today()
     end = start + timedelta(days=365)
-    if not start <= check <= end:
-        print("Incorrect date")
-        return False
-    return True
+    return check_dates_restrictions(var, start, end)
 
 
 def check_arr_date(var, **kwargs):
     if var == "":
         return True
+    start = datetime.strptime(kwargs['dep_date'], '%d.%m.%Y') + timedelta(days=1)
+    end = datetime.today() + timedelta(days=365)
+    return check_dates_restrictions(var, start, end)
+
+
+def check_dates_restrictions(var, start, end):
     try:
         check = datetime.strptime(var, '%d.%m.%Y')
     except ValueError:
-        print("Set departure date as dd.mm.yyyy")
+        print("Set date as dd.mm.yyyy")
         return False
-    start = datetime.strptime(kwargs['dep_date'], '%d.%m.%Y') + timedelta(days=1)
-    end = datetime.today() + timedelta(days=365)
     if not start <= check <= end:
         print("Incorrect date")
         return False
